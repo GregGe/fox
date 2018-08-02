@@ -12,6 +12,7 @@ function panic() {
 
 function install() {
     mkdir -p ~/bin/
+    echo ${SELF_PATH}
     ${SELF_PATH}/extras/install
 }
 

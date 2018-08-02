@@ -1,1 +1,8 @@
 *.swp
+
+# Stored the custom attrs for folder in Mac OS X
+.DS_Store
+
+# Intellij
+*.iml
+.idea/

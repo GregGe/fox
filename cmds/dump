@@ -1,6 +1,15 @@
 #!/bin/bash
 
 SDK=/Users/prife/Library/Android/sdk/sources/android-25
+sdkpath=""
+function get_android_sdk_source_path(){
+    if [ -n "$ANDROID_SDK_HOME" ]; then
+        sdkpath="$ANDROID_SDK_HOME"
+        file
+    else
+        echo "Please set the android sdk environment to \$ANDROID_SDK_HOME"
+    fi
+}
 
 function get_abs_path() {
     readlink -f $1
