@@ -1,6 +1,6 @@
 #!/bin/bash
 
-SDK=/Users/prife/Library/Android/sdk/sources/android-25
+SDK=/Volumes/Work/gejiqiang/Android/sdk/sources/android-27
 sdkpath=""
 function get_android_sdk_source_path(){
     if [ -n "$ANDROID_SDK_HOME" ]; then
