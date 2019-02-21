@@ -10,8 +10,8 @@ cd ~/bin
 ln -fs $SELF_PATH/apktools/apktool
 ln -fs $SELF_PATH/smali/baksmali
 ln -fs $SELF_PATH/smali/smali
-ln -fs $SELF_PATH/jadx/jadx-0.7.1/bin/jadx
-ln -fs $SELF_PATH/jadx/jadx-0.7.1/bin/jadx-gui
+ln -fs $SELF_PATH/jadx/jadx-0.9.0/bin/jadx
+ln -fs $SELF_PATH/jadx/jadx-0.9.0/bin/jadx-gui
 
 case $(uname -s) in
     Linux)
