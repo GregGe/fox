@@ -5,6 +5,11 @@ JADX=jadx
 #{normal, fallback}
 JADX_MODE=normal
 AOSP_FRAMWROKDIR=
+#{framework/arm, framework/arm64}
+FRAMEWORK_ARM_DIR=
+#{framework/oat/arm, framework/oat/arm64}
+FRAMEWORK_OAT_DIR=
+VDEX_MODE=
 
 function get_abs_path() {
     readlink -f $1 
@@ -24,15 +29,32 @@ function smali2dex() {
 }
 
 function oat2dex() {
-    local oat=$1
+   local oat=$1
+   local _outdir=$(basename $1)
+   local smalidir=${_outdir%.*}
+   local outdex=${2:-classes.dex}
+   echo "oat/odex -> smali"
+   echo "smalidir " ${smalidir}
+   echo "outdex " ${outdex}
+   baksmali x -c boot.oat -d ${AOSP_FRAMWROKDIR} ${oat} -o ${smalidir}
+   echo "smali -> dex"
+   smali a ${smalidir} -o ${outdex}
+   rm -rf ${smalidir}
+}
+
+function vdex2dex() {
+    local vdex=$1
     local _outdir=$(basename $1)
     local smalidir=${_outdir%.*}
     local outdex=${2:-classes.dex}
-    echo "oat/odex -> smali"
-    baksmali x -c boot.oat -d ${AOSP_FRAMWROKDIR} ${oat} -o ${smalidir}
-    echo "smali -> dex"
-    smali a ${smalidir} -o ${outdex}
-    rm -rf ${smalidir}
+    local outvdex=${smalidir}.apk_classes.dex
+    local outcdex=${smalidir}_classes.cdex
+    local outcdexnew=${smalidir}_classes.cdex.new
+    echo "vdex -> dex " ${outvdex} ${outdex}
+    vdexExtractor --ignore-crc-error -i ${vdex} -o  ./
+    compact_dex_converter ${outcdex}
+    rm ${outcdex}
+    mv ${outcdexnew} ${outdex}
 }
 
 function get_classesdex_in_oat() {
@@ -42,7 +64,12 @@ function get_classesdex_in_oat() {
 }
 
 function check_has_multidex() {
-    local lists=$(find $1 -name "*.oat" -o -name "*.odex")
+    local lists
+    if [ x"${VDEX_MODE}" != x ]; then
+        lists=$(find $1 -name "*.oat" -o -name "*.vdex")
+    else
+        lists=$(find $1 -name "*.oat" -o -name "*.odex")
+    fi
     for i in ${lists[*]}; do
         local out=$(get_classesdex_in_oat $i)
         if [ x"${out}" != x ]; then
@@ -54,7 +81,7 @@ function check_has_multidex() {
 function jadx_wrapper() {
     case $JADX_MODE in
         normal)
-            $JADX --show-bad-code "$@"
+            $JADX --deobf --show-bad-code "$@"
             ;;
         fallback)
             $JADX -f "$@"
@@ -72,17 +99,26 @@ function extract_dex_from_frameworks() {
         local base=$(basename "$file")
         local tmp=${base#boot-}
         local package=$(basename ${tmp%.*})
-        oat2dex ${file} ${package}.dex
+        if [ x"${VDEX_MODE}" != x ]; then
+            vdex2dex ${file} ${package}.dex
+        else
+            oat2dex ${file} ${package}.dex
+        fi
         echo "jadx: $dex -> to java"
         jadx_wrapper ${package}.dex
 
         local lists_more=($(get_classesdex_in_oat ${file}))
         for more in ${lists_more[*]}
         do
-            oat2dex ${file}/${more} ${package}-${more}
+            if [ x"${VDEX_MODE}" != x ]; then
+                vdex2dex ${file} ${package}.dex
+            else
+                oat2dex ${file}/${more} ${package}-${more}
+            fi
             echo "jadx: $dex -> to java"
             jadx_wrapper ${package}-${more} -d ${package}
         done
+        rm *.dex *.jobf
     done
 }
 
@@ -101,12 +137,49 @@ function decompile_framework() {
     mkdir -p framework
     HERE=$(pwd)
     cd framework
-    extract_dex_from_frameworks ${rom_dir}/framework/arm64 oat
-    extract_dex_from_frameworks ${rom_dir}/framework/oat/arm64 odex
+    if [ x"${VDEX_MODE}" != x ]; then
+        extract_dex_from_frameworks ${rom_dir}/${FRAMEWORK_OAT_DIR} vdex
+    else
+        extract_dex_from_frameworks ${rom_dir}/${FRAMEWORK_ARM_DIR} oat
+        extract_dex_from_frameworks ${rom_dir}/${FRAMEWORK_OAT_DIR} odex
+    fi
     cd $HERE
 }
 
+function decompile_app_from_vdex() {
+    local app_dir=$(get_abs_path $1)
+    local app_name=$(basename ${app_dir})
+    local subdir=arm64
+    if [ ! -f ${app_dir}/oat/arm64/${app_name}.vdex ]; then
+        if [ ! -f ${app_dir}/oat/arm/${app_name}.vdex ]; then
+           jadx_wrapper -e ${app_dir}/${app_name}.apk
+           return
+        else
+            subdir=arm
+        fi
+    fi
+    local file=$(find ${app_dir}/oat/${subdir} -name "*.vdex")
+    vdex2dex ${file} classes.dex
+    cp ${app_dir}/${app_name}.apk ./
+    jar -uvf ${app_name}.apk classes.dex
+    local lists_more=($(get_classesdex_in_oat ${file}))
+    for more in ${lists_more[*]}
+    do
+        echo $more
+        vdex2dex ${file}/${more} ${more}
+        jar -uvf ${app_name}.apk ${more}
+    done
+    jadx_wrapper -e ${app_name}.apk
+    mv ${app_name}.apk *.dex  ${app_name}
+}
+
 function decompile_app() {
+    if [ x"${VDEX_MODE}" != x ]; then
+        echo "decompile_app from vdex"
+        decompile_app_from_vdex $1
+        return;
+    fi
+
     local app_dir=$(get_abs_path $1)
     local app_name=$(basename ${app_dir})
     local subdir=arm64
@@ -133,28 +206,49 @@ function decompile_app() {
     mv ${app_name}.apk *.dex  ${app_name}
 }
 
+function setup() {
+    local aosp_framework_dir=$(get_abs_path $1)/framework
+    if [ -d ${aosp_framework_dir}/arm64 ]; then
+      echo "is arm64 "
+      FRAMEWORK_ARM_DIR="framework/arm64"
+      FRAMEWORK_OAT_DIR="framework/oat/arm64"
+    else
+      echo "is arm"
+      FRAMEWORK_ARM_DIR="framework/arm"
+      FRAMEWORK_OAT_DIR="framework/oat/arm"
+    fi
+
+    if [ -f ${aosp_framework_dir}/oat/arm/am.vdex ]; then
+      echo "is vdex"
+      VDEX_MODE="yes"
+    fi
+}
+
 action=$1
 shift 1
+
+setup $1
+
 case $action in
     all-jar)
         extract_dex_from_frameworks_jars $1/framework/
         ;;
     all)
-        AOSP_FRAMWROKDIR=$(get_abs_path $1/framework/arm64)
+        AOSP_FRAMWROKDIR=$(get_abs_path $1/${FRAMEWORK_ARM_DIR})
         decompile_framework "$@"
         ;;
     all-fallback)
         JADX_MODE=fallback
-        AOSP_FRAMWROKDIR=$(get_abs_path $1/framework/arm64)
+        AOSP_FRAMWROKDIR=$(get_abs_path $1/${FRAMEWORK_ARM_DIR})
         decompile_framework "$@"
         ;;
     app)
-        AOSP_FRAMWROKDIR=$(get_abs_path $1/framework/arm64)
+        AOSP_FRAMWROKDIR=$(get_abs_path $1/${FRAMEWORK_ARM_DIR})
         decompile_app $2
         ;;
     app-fallback)
         JADX_MODE=fallback
-        AOSP_FRAMWROKDIR=$(get_abs_path $1/framework/arm64)
+        AOSP_FRAMWROKDIR=$(get_abs_path $1/${FRAMEWORK_ARM_DIR})
         decompile_app $2
         ;;
     check)

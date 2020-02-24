@@ -2,7 +2,7 @@
 
 SELF_PATH=
 function get_abs_path() {
-    readlink -f $1 
+    readlink -f $1
 }
 
 function panic() {
